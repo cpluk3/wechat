@@ -1,0 +1,198 @@
+<?php
+
+class Compute{
+
+	public static function expectedRate($input_file, $output_file, $base_date, $cutoff_start, $cutoff_end){
+		$input_handle = fopen($input_file, "r");
+		$output_handle = fopen($output_file, "w");
+
+		/* Added params  */
+
+
+		$zero_count = 0;	
+		$total_exp = 0;
+		$total_count = 0;
+		$exp_by_date = array();		
+		$total_by_date = array();
+		for($i = $cutoff_start; $i <= $cutoff_end; $i++){
+			$exp_by_date[$i] = 0;
+			$total_by_date[$i] = 0;
+		}
+
+		while(1){
+
+p
+			$buffer = self::getLine($input_handle);
+
+			if($buffer === false){
+				break;
+			}
+
+			if(substr($buffer, 0, 1) == "#"){
+				continue;
+			}
+
+			$data_array = explode(",", $buffer);
+			$uin = trim($data_array[0]);
+			$rate_before = trim($data_array[1]);
+			$rate_after = trim($data_array[2]);
+			$rate_diff = trim($data_array[3]);
+			$date_index = trim($data_array[4]);
+			
+			if($rate_diff != 0){
+				$exp_by_date[$date_index] += $rate_diff;
+				$total_by_date[$date_index] += 1;
+			} else {
+				$zero_count++;
+			}
+			$total_count += 1;
+			$total_exp += $rate_diff;
+		}
+
+		fwrite($output_handle, "$total_exp, $total_count\n");
+		fwrite($output_handle, "0, $zero_count\n");
+		/* Write result to out file */
+		for($i = $cutoff_start; $i <= $cutoff_end; $i++){
+			fwrite($output_handle,  Date('Y-m-d', strtotime($base_date) + $i * 86400) . ", " . $exp_by_date[$i] . ", " . $total_by_date[$i] . "\n");
+		}
+		fclose($input_handle);
+		fclose($output_handle);
+	}
+
+	public static function cdf($input_file, $output_file, $interval=0.1){
+		$input_handle = fopen($input_file, "r");
+		$output_handle = fopen($output_file, "w");
+
+		$cdf = array();
+		$interval_array = array();
+		for($i = 0; $i <= 1; $i = $i + $interval){
+			array_push($interval_array, $i);
+		}
+
+		for($j = 0; $j < count($interval_array); $j++){
+			$cdf[$j] = 0; 
+		}
+
+		$count = 0;
+		while(1){
+			$buffer = self::getLine($input_handle);
+			if($buffer === false){
+				break;
+			}
+
+			if(substr($buffer, 0, 1) == "#"){
+				continue;
+			}
+
+			$count++;
+
+			$data_array = explode(",", $buffer);
+			$uin = trim($data_array[0]);
+			$rate_before = trim($data_array[1]);
+			$rate_after = trim($data_array[2]);
+			$rate_diff = trim($data_array[3]);
+			$date_index = trim($data_array[4]);
+
+			for($j = 0; $j < count($interval_array); $j++){
+				//echo "Rate diff: $rate_diff, interval $j: " . $interval_array[$j] . "\n";
+				if($rate_diff <= $interval_array[$j]){
+					//echo "Added\n";
+					$cdf[$j] = $cdf[$j] + 1;
+				}
+			}
+		}
+
+		/* Write result to out file */
+		for($i = 0; $i < count($interval_array); $i++){
+			fwrite($output_handle, $interval_array[$i] . "," . $cdf[$i] . "\n");
+		}
+
+		fclose($input_handle);
+		fclose($output_handle);
+	}
+
+	public static function heatmap($input_file, $output_file, $cutoff_start, $cutoff_end){
+		$input_handle = fopen($input_file, "r");
+		$output_handle = fopen($output_file, "w");
+
+		$xmin = $cutoff_start;
+		$xmax = $cutoff_end;
+		$xinterval = 1;
+		$ymin = 0;
+		$ymax = 1;
+		$yinterval = 0.1;
+
+		$data_array = array();
+		$x_array = array();
+		$y_array = array();
+
+		$first = 0;
+		$t_array = array();
+
+		for($y = $ymin; $y < (intval($ymax) + intval($yinterval) ); $y = $y + $yinterval){
+			$t_array[strval($y)] = 0;
+			array_push($y_array, $y);
+		}
+
+		for($x = $xmin; $x < $xmax + $xinterval; $x = $x + $xinterval){
+			$data_array[strval($x)] = $t_array;
+			array_push($x_array, $x);
+		}
+
+		$input_handle = fopen($input_file, "r");
+		if ($input_handle) {
+			while (($buffer = self::getLine($input_handle)) !== false) {
+				if(substr($buffer, 0, 1) == "#"){
+					continue;
+				}
+
+				$buffer_array = explode(", ", $buffer);
+				$col1 = trim($buffer_array[4]);
+				$col2 = trim($buffer_array[3]);
+				/*
+				if($col2 == 0){
+					//If rate diff is zero, do not put data
+					continue;	
+				}
+				*/
+				$temp_x = strval(self::getNearest($col1 , $x_array));
+				$temp_y = strval(self::getNearest($col2 , $y_array));
+				$data_array[$temp_x][$temp_y]++;
+			}
+		} else {
+			// error opening the file.
+		}
+
+		$output_handle = fopen($output_file, "w");
+		for($x = $xmin; $x < $xmax + $xinterval; $x = $x + $xinterval){
+			for($y = $ymin; $y < (intval($ymax) + intval($yinterval) ); $y = $y + $yinterval){
+				fwrite($output_handle, "$x, $y, " . $data_array[strval($x)][strval($y)] . "\n");
+			}
+		}
+	}
+
+	public static function getLine($handle){
+
+		if(!feof($handle)){
+			$buffer = trim(fgets($handle, 4096));
+			if(empty($buffer)){
+				return false;
+			}
+			return $buffer;
+		}
+		return false;
+	}
+
+	public static function getNearest($search, $arr) {
+		$closest = null;
+		foreach($arr as $item) {
+			if($closest === null || abs($search - $closest) > abs($item - $search)) {
+				$closest = $item;
+			}
+		}
+		return $closest;
+	}
+
+}
+
+?>
